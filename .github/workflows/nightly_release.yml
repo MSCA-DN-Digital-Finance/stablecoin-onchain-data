@@ -1,4 +1,4 @@
-name: Nightly Aave data update (Release)
+name: Nightly DeFi data update (Release)
 
 on:
   schedule:
