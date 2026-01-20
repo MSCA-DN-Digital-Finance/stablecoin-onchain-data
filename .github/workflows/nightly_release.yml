@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install -U pip
-          pip install pandas requests python-dotenv pyarrow
+          pip install pandas requests python-dotenv pyarrow tqdm
 
       # 1) Download previous state from rolling release (if it exists)
       - name: Download latest dataset state (optional)
