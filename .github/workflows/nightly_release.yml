@@ -31,8 +31,11 @@ jobs:
         run: |
           mkdir -p data
           if gh release view data-latest >/dev/null 2>&1; then
-            gh release download data-latest --pattern "aave_data.zip" --dir data
-            unzip -o data/aave_data.zip -d .
+            gh release download data-latest --pattern "*_data.zip" --dir data || true
+            for z in data/*_data.zip; do
+              [ -f "$z" ] || continue
+              unzip -o "$z" -d .
+            done
           else
             echo "No data-latest release found; starting from scratch."
           fi
@@ -43,11 +46,18 @@ jobs:
           GRAPH_API_KEY: ${{ secrets.GRAPH_API_KEY }}
         run: |
           python get_aave_hourly.py
+          python update_blocks_to_time.py
+          python update_crv_3pool.py
+          python update_uniswap_metrics.py
+          python update_hourly_liquidity.py
 
       # 3) Package output
       - name: Zip dataset
         run: |
           zip -r aave_data.zip data/AAVE
+          zip -r uniswap_data.zip data/Uniswap
+          zip -r curve_data.zip data/Curve
+          zip -r eth_blocks_data.zip data/ETH_blocks
 
       # 4) Publish a nightly snapshot release (archival)
       - name: Create nightly release + upload
@@ -56,9 +66,9 @@ jobs:
         run: |
           TAG="data-$(date -u +%Y-%m-%d)"
           gh release create "$TAG" \
-            --title "Aave hourly dataset $TAG" \
+            --title "DeFi hourly datasets $TAG" \
             --notes "Automated nightly snapshot" \
-            aave_data.zip
+            aave_data.zip uniswap_data.zip curve_data.zip eth_blocks_data.zip
 
       # 5) Update rolling state release (so next run can download it)
       - name: Update rolling data-latest release asset
@@ -66,14 +76,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release view data-latest >/dev/null 2>&1 || \
-            gh release create data-latest --title "Latest Aave dataset" --notes "Rolling state for automation"
+            gh release create data-latest --title "Latest DeFi dataset" --notes "Rolling state"
 
-          # delete existing aave_data.zip asset if present
-          ASSET_ID=$(gh api repos/${{ github.repository }}/releases/tags/data-latest \
-            --jq '.assets[] | select(.name=="aave_data.zip") | .id' || true)
-
-          if [ -n "$ASSET_ID" ]; then
-            gh api -X DELETE repos/${{ github.repository }}/releases/assets/$ASSET_ID
-          fi
-
-          gh release upload data-latest aave_data.zip
+          for f in aave_data.zip uniswap_data.zip curve_data.zip eth_blocks_data.zip; do
+            ASSET_ID=$(gh api repos/${{ github.repository }}/releases/tags/data-latest \
+              --jq ".assets[] | select(.name==\"$f\") | .id" || true)
+            if [ -n "$ASSET_ID" ]; then
+              gh api -X DELETE repos/${{ github.repository }}/releases/assets/$ASSET_ID
+            fi
+            gh release upload data-latest "$f"
+          done
