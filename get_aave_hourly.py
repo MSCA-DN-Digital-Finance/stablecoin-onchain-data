@@ -142,6 +142,7 @@ def get_data_coin_aave(name, start_ts, endpoint):
                             df.index[-1].ceil("H"),
                             freq="1H")
     df = df.reindex(full_idx,method = 'ffill')
+    df = df.iloc[:-1,:]
     return df 
 
 def update_aave_parquet(coin: str, version: str, url: str, out_path: str):
