@@ -1,4 +1,4 @@
-name: Nightly DeFi data update (Release)
+name: Nightly DeFi Data Update (Release)
 
 on:
   schedule:
