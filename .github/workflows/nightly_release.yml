@@ -1,0 +1,79 @@
+name: Nightly Aave data update (Release)
+
+on:
+  schedule:
+    - cron: "20 2 * * *"  # nightly at 02:20 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  update-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -U pip
+          pip install pandas requests python-dotenv pyarrow
+
+      # 1) Download previous state from rolling release (if it exists)
+      - name: Download latest dataset state (optional)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p data
+          if gh release view data-latest >/dev/null 2>&1; then
+            gh release download data-latest --pattern "aave_data.zip" --dir data
+            unzip -o data/aave_data.zip -d .
+          else
+            echo "No data-latest release found; starting from scratch."
+          fi
+
+      # 2) Run your updater
+      - name: Run data collection
+        env:
+          GRAPH_API_KEY: ${{ secrets.GRAPH_API_KEY }}
+        run: |
+          python get_aave_hourly.py
+
+      # 3) Package output
+      - name: Zip dataset
+        run: |
+          zip -r aave_data.zip data/AAVE
+
+      # 4) Publish a nightly snapshot release (archival)
+      - name: Create nightly release + upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="data-$(date -u +%Y-%m-%d)"
+          gh release create "$TAG" \
+            --title "Aave hourly dataset $TAG" \
+            --notes "Automated nightly snapshot" \
+            aave_data.zip
+
+      # 5) Update rolling state release (so next run can download it)
+      - name: Update rolling data-latest release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view data-latest >/dev/null 2>&1 || \
+            gh release create data-latest --title "Latest Aave dataset" --notes "Rolling state for automation"
+
+          # delete existing aave_data.zip asset if present
+          ASSET_ID=$(gh api repos/${{ github.repository }}/releases/tags/data-latest \
+            --jq '.assets[] | select(.name=="aave_data.zip") | .id' || true)
+
+          if [ -n "$ASSET_ID" ]; then
+            gh api -X DELETE repos/${{ github.repository }}/releases/assets/$ASSET_ID
+          fi
+
+          gh release upload data-latest aave_data.zip
