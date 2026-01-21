@@ -37,9 +37,7 @@ def format_curve_3pool_hourly(df_raw: pd.DataFrame) -> pd.DataFrame:
 
     df = df_raw.copy()
 
-
-    if not pd.api.types.is_datetime64_any_dtype(df["timestamp"]):
-        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    df["timestamp"] = pd.to_datetime(pd.to_numeric(df["timestamp"]), unit="s", utc=True)
 
     df = df.set_index("timestamp").sort_index()
     df.index = df.index.ceil('h')
