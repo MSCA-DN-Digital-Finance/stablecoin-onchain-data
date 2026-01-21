@@ -248,7 +248,7 @@ def _load_blocks_parquet(path: str = "hourly_blocks.parquet") -> pd.DataFrame:
     return df
 
 
-def block_by_timestamp(ts: int | datetime, parquet_path: str = "hourly_blocks.parquet") -> int:
+def block_by_timestamp(ts: int | datetime, parquet_path: str = "./data/ETH_blocks/hourly_blocks.parquet") -> int:
     global _BLOCKS_DF
     if _BLOCKS_DF is None:
         _BLOCKS_DF = _load_blocks_parquet(parquet_path)
