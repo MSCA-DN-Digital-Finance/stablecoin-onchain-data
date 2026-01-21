@@ -389,7 +389,8 @@ if __name__ == "__main__":
     for pair, pool in zip(['USDC_USDT','DAI_USDC'], [POOLS_USDC_USDT,POOLS_DAI_USDC]):
         try:
             try:
-                start_ts = int(pd.read_parquet(f"./data/Uniswap/{pair}_hourly_metrics.parquet").hour.iloc[-1])
+                old = pd.read_parquet(f"./data/Uniswap/{pair}_hourly_metrics.parquet")
+                start_ts = int(old.query('feeTier == 100').datetime.iloc[-1])
             except:
                 print('----- Original dataset not found ------')
             else:    
@@ -403,8 +404,10 @@ if __name__ == "__main__":
                 )
                 if "price1_per_0" in hourly.columns:
                     hourly["depeg_bps"] = (hourly["price1_per_0"] - 1.0) * 1e4
-
+                old = old[old['hour'] < start_ts]
+                hourly = pd.concat([old, hourly], axis = 0)
+                hourly.sort_values(by = ['feeTier', 'hour'])
                 hourly.to_parquet(f"./data/Uniswap/{pair}_hourly_metrics.parquet", index=False)
                 print('--- Hourly Uniswap metrics updated -----')
-        except:
-            print('--- Hourly Uniswap metrics update failed -----')
+        except Exception as e:
+            print('--- Hourly Uniswap metrics update failed -----', e)
