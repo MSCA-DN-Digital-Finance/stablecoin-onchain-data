@@ -475,7 +475,7 @@ if __name__ == "__main__":
                 # Determine start_dt safely
                 try:
                     last_hour = states_df_old["hour"].iloc[-1]
-                    start_dt = last_hour + pd.Timedelta(hours=1)
+                    start_dt = last_hour
                 except Exception as e:
                     print(f"[WARN] {label}: cannot determine start_dt from {state_path}: {e}. Skipping update.")
                     continue
@@ -510,15 +510,11 @@ if __name__ == "__main__":
 
                 # Append + dedupe (recommended to avoid overlaps)
                 try:
+                    states_df_old = states_df_old[states_df_old['hour'] < start_dt]
+                    bars_df_old = bars_df_old[bars_df_old['hour'] < start_dt]
                     full_states = pd.concat([states_df_old, states_df], axis=0)
                     full_bars   = pd.concat([bars_df_old, bars_df], axis=0)
-
-                    # # optional dedupe if your data can overlap by hour
-                    # if "hour" in full_states.columns:
-                    #     full_states = full_states.drop_duplicates(subset=["hour"], keep="last")
-                    # if "hour" in full_bars.columns:
-                    #     full_bars = full_bars.drop_duplicates(subset=["hour"], keep="last")
-
+                    
                     os.makedirs(os.path.dirname(state_path), exist_ok=True)
                     full_states.to_parquet(state_path)
                     full_bars.to_parquet(bars_path)
