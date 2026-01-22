@@ -1,5 +1,7 @@
 # Stablecoin Onchain data
 
+[![DOI](https://zenodo.org/badge/1138117387.svg)](https://doi.org/10.5281/zenodo.18338843)
+
 This daily release contains hourly data regarding stablecoins on major DeFi venues. All the data is collected from subgraphs and aggregated into ready-to-use parquet files. 
 
 ## AAVE
