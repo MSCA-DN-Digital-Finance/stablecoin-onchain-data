@@ -11,6 +11,8 @@ permissions:
 jobs:
   update-and-release:
     runs-on: ubuntu-latest
+    env:
+      ZENODO_API: https://zenodo.org/api
 
     steps:
       - uses: actions/checkout@v4
@@ -23,6 +25,10 @@ jobs:
         run: |
           python -m pip install -U pip
           pip install pandas requests python-dotenv pyarrow tqdm
+
+      - name: Set nightly tag
+        run: |
+          echo "TAG=data-$(date -u +%Y-%m-%d)" >> $GITHUB_ENV
 
       # 1) Download previous state from rolling release (if it exists)
       - name: Download latest dataset state (optional)
@@ -64,11 +70,120 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="data-$(date -u +%Y-%m-%d)"
           gh release create "$TAG" \
             --title "DeFi hourly datasets $TAG" \
             --notes "Automated nightly snapshot" \
             aave_data.zip uniswap_data.zip curve_data.zip eth_blocks_data.zip
+
+      # 4b) Upload same files to Zenodo as a NEW VERSION (keeps concept DOI stable)
+      - name: Zenodo - create new version draft
+        env:
+          ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+          ZENODO_DEPOSITION_ID: ${{ secrets.ZENODO_DEPOSITION_ID }}
+        run: |
+          set -euo pipefail
+
+          resp="$(curl -sS -X POST \
+            "$ZENODO_API/deposit/depositions/$ZENODO_DEPOSITION_ID/actions/newversion" \
+            -H "Authorization: Bearer $ZENODO_TOKEN")"
+
+          latest_draft_url="$(echo "$resp" | jq -r '.links.latest_draft')"
+          draft="$(curl -sS -H "Authorization: Bearer $ZENODO_TOKEN" "$latest_draft_url")"
+
+          echo "ZENODO_DRAFT_ID=$(echo "$draft" | jq -r '.id')" >> $GITHUB_ENV
+          echo "ZENODO_BUCKET=$(echo "$draft" | jq -r '.links.bucket')" >> $GITHUB_ENV
+
+      - name: Zenodo - clear draft files (safety)
+        env:
+          ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+        run: |
+          set -euo pipefail
+          files="$(curl -sS -H "Authorization: Bearer $ZENODO_TOKEN" \
+            "$ZENODO_API/deposit/depositions/$ZENODO_DRAFT_ID" | jq -r '.files[]?.id')"
+
+          for fid in $files; do
+            curl -sS -X DELETE \
+              -H "Authorization: Bearer $ZENODO_TOKEN" \
+              "$ZENODO_API/deposit/depositions/$ZENODO_DRAFT_ID/files/$fid" >/dev/null
+          done
+
+      - name: Zenodo - upload ZIPs
+        env:
+          ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+        run: |
+          set -euo pipefail
+          for f in aave_data.zip uniswap_data.zip curve_data.zip eth_blocks_data.zip; do
+            curl -sS --fail \
+              -H "Authorization: Bearer $ZENODO_TOKEN" \
+              --upload-file "$f" \
+              "$ZENODO_BUCKET/$(basename "$f")" >/dev/null
+          done
+
+      - name: Zenodo - update metadata + publish
+        env:
+          ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+          ZENODO_CREATOR_NAME: ${{ secrets.ZENODO_CREATOR_NAME }}
+          ZENODO_COMMUNITY: ${{ secrets.ZENODO_COMMUNITY }}
+        run: |
+          set -euo pipefail
+
+          RELEASE_URL="${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG"
+          DESC="Automated nightly snapshot from GitHub release: <a href=\"$RELEASE_URL\">$RELEASE_URL</a>"
+
+          # Build metadata; include community only if provided
+          if [ -n "${ZENODO_COMMUNITY:-}" ]; then
+            jq -n \
+              --arg title "DeFi hourly datasets ($TAG)" \
+              --arg desc "$DESC" \
+              --arg version "$TAG" \
+              --arg creator "$ZENODO_CREATOR_NAME" \
+              --arg comm "$ZENODO_COMMUNITY" \
+              '{
+                metadata: {
+                  upload_type: "dataset",
+                  title: $title,
+                  description: $desc,
+                  version: $version,
+                  creators: [{name: $creator}],
+                  communities: [{identifier: $comm}],
+                  related_identifiers: [{
+                    relation: "isSupplementTo",
+                    identifier: "'"$RELEASE_URL"'",
+                    scheme: "url"
+                  }]
+                }
+              }' > meta.json
+          else
+            jq -n \
+              --arg title "DeFi hourly datasets ($TAG)" \
+              --arg desc "$DESC" \
+              --arg version "$TAG" \
+              --arg creator "$ZENODO_CREATOR_NAME" \
+              '{
+                metadata: {
+                  upload_type: "dataset",
+                  title: $title,
+                  description: $desc,
+                  version: $version,
+                  creators: [{name: $creator}],
+                  related_identifiers: [{
+                    relation: "isSupplementTo",
+                    identifier: "'"$RELEASE_URL"'",
+                    scheme: "url"
+                  }]
+                }
+              }' > meta.json
+          fi
+
+          curl -sS --fail -X PUT \
+            -H "Authorization: Bearer $ZENODO_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @meta.json \
+            "$ZENODO_API/deposit/depositions/$ZENODO_DRAFT_ID" >/dev/null
+
+          curl -sS --fail -X POST \
+            -H "Authorization: Bearer $ZENODO_TOKEN" \
+            "$ZENODO_API/deposit/depositions/$ZENODO_DRAFT_ID/actions/publish" >/dev/null
 
       # 5) Update rolling state release (so next run can download it)
       - name: Update rolling data-latest release asset
