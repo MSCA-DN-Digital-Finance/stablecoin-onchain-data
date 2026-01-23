@@ -261,6 +261,7 @@ jobs:
           # IMPORTANT: Preserve metadata and enforce required grant
           echo "::group::Update metadata (preserve + enforce DIGITAL grant)"
           TODAY_UTC="$(date -u +%Y-%m-%d)"
+          PUBDATE="$TODAY_UTC"
           TITLE="Stablecoin DeFi Hourly Dataset (weekly snapshot) - ${TODAY_UTC}"
 
           DESC="$(cat <<EOF
@@ -283,6 +284,7 @@ jobs:
           NEW_METADATA_ONLY="$(echo "$CURRENT_DRAFT" | jq \
             --arg title "$TITLE" \
             --arg desc "$DESC" \
+            --arg pubdate "$PUBDATE" \
             --arg community "$ZENODO_COMMUNITY" \
             --arg grant "$ZENODO_REQUIRED_GRANT_ID" \
             '
