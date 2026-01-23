@@ -299,7 +299,7 @@ jobs:
           METADATA_PAYLOAD="$(jq -n --argjson md "$NEW_METADATA_ONLY" '{metadata: $md}')"
 
           echo "Metadata payload (sanity check):"
-          echo "$METADATA_PAYLOAD" | jq '{metadata: {title: .metadata.title, has_grants: (.metadata.grants|length), grants: .metadata.grants, communities: .metadata.communities}}'
+          echo "$METADATA_PAYLOAD" | jq '{metadata: {title: .metadata.title, description: .metadata.description, publication_date: .metadata.publication_date, has_grants: (.metadata.grants|length), grants: .metadata.grants, communities: .metadata.communities}}'
 
           UPDATED="$(zenodo_api PUT "$ZENODO_BASE_URL/api/deposit/depositions/$TARGET_ID" "$METADATA_PAYLOAD")"
           echo "$UPDATED" | jq '{id, state, submitted, title:.metadata.title, grants:.metadata.grants, communities:.metadata.communities}'
