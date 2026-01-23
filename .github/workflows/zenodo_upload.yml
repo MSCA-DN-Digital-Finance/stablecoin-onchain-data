@@ -22,7 +22,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Required by your community policy
-      ZENODO_REQUIRED_GRANT_ID: "10.3030/101119635"
+      ZENODO_REQUIRED_GRANT_ID: "10.13039/501100000780::101119635"
 
     steps:
       - name: Checkout
