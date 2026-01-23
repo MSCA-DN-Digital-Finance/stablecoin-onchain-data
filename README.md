@@ -1,6 +1,9 @@
 # Stablecoin Onchain data
 
+Code citation :
 [![DOI](https://zenodo.org/badge/1138117387.svg)](https://doi.org/10.5281/zenodo.18338843)
+Dataset citation :
+[![DOI](https://zenodo.org/badge/18339067.svg)](https://doi.org/10.5281/zenodo.18339067)
 
 This daily release contains hourly data regarding stablecoins on major DeFi venues. All the data is collected from subgraphs and aggregated into ready-to-use parquet files. 
 
