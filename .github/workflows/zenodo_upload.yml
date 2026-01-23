@@ -2,7 +2,8 @@ name: Weekly upload to Zenodo (from data-latest)
 
 on:
   schedule:
-    - cron: "30 3 * * 1" # Weekly Monday 03:30 UTC
+    # Weekly Monday 03:30 UTC
+    - cron: "30 3 * * 1"
   workflow_dispatch: {}
 
 permissions:
@@ -20,8 +21,7 @@ jobs:
       ZENODO_CREATOR_NAME: ${{ secrets.ZENODO_CREATOR_NAME }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # REQUIRED by your Zenodo community policy:
-      # DIGITAL grant/award (EU) 101119635
+      # Required by your community policy
       ZENODO_REQUIRED_GRANT_ID: "10.3030/101119635"
 
     steps:
@@ -102,6 +102,7 @@ jobs:
           echo "::endgroup::"
 
           zenodo_api() {
+            # usage: zenodo_api METHOD URL [JSON_DATA]
             local method="$1"; shift
             local url="$1"; shift
             local data="${1:-}"
@@ -135,22 +136,26 @@ jobs:
             set -e
 
             if [ "$curl_rc" -ne 0 ] || ! [[ "${http_code:-}" =~ ^[0-9]{3}$ ]]; then
-              echo "ERROR: curl failed calling Zenodo"
-              echo "  METHOD: $method"
-              echo "  URL:    $url"
-              echo "  curl_rc=$curl_rc http_code='${http_code:-<empty>}'"
-              echo "---- response headers ----"; cat "$headers" || true
-              echo "---- response body ----"; cat "$body" || true
+              echo "ERROR: curl failed calling Zenodo" >&2
+              echo "  METHOD: $method" >&2
+              echo "  URL:    $url" >&2
+              echo "  curl_rc=$curl_rc http_code='${http_code:-<empty>}'" >&2
+              echo "---- response headers ----" >&2
+              cat "$headers" >&2 || true
+              echo "---- response body ----" >&2
+              cat "$body" >&2 || true
               exit 1
             fi
 
             if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-              echo "ERROR: Zenodo API returned non-2xx"
-              echo "  METHOD: $method"
-              echo "  URL:    $url"
-              echo "  HTTP:   $http_code"
-              echo "---- response headers ----"; cat "$headers" || true
-              echo "---- response body ----"; cat "$body" || true
+              echo "ERROR: Zenodo API returned non-2xx" >&2
+              echo "  METHOD: $method" >&2
+              echo "  URL:    $url" >&2
+              echo "  HTTP:   $http_code" >&2
+              echo "---- response headers ----" >&2
+              cat "$headers" >&2 || true
+              echo "---- response body ----" >&2
+              cat "$body" >&2 || true
               exit 1
             fi
 
@@ -258,8 +263,7 @@ jobs:
           done
           echo "::endgroup::"
 
-          # IMPORTANT: Preserve metadata and enforce required grant
-          echo "::group::Update metadata (preserve + enforce DIGITAL grant)"
+          echo "::group::Update metadata (preserve + enforce grant + force publication_date + fix dates)"
           TODAY_UTC="$(date -u +%Y-%m-%d)"
           PUBDATE="$TODAY_UTC"
           TITLE="Stablecoin DeFi Hourly Dataset (weekly snapshot) - ${TODAY_UTC}"
@@ -274,7 +278,6 @@ jobs:
           EOF
           )"
 
-          # Fetch current draft again (so we merge on top of what Zenodo has)
           CURRENT_DRAFT="$(zenodo_api GET "$ZENODO_BASE_URL/api/deposit/depositions/$TARGET_ID")"
 
           NEW_METADATA_ONLY="$(echo "$CURRENT_DRAFT" | jq \
@@ -287,17 +290,33 @@ jobs:
             .metadata
             | .title = $title
             | .description = $desc
-            | .publication_date = (.publication_date // $pubdate)
+            | .publication_date = $pubdate
             | .communities = ((.communities // []) | map(select(.identifier != $community)) + [{identifier: $community}])
             | .grants = ((.grants // []) | map(select(.id != $grant)) + [{id: $grant}])
+            | .dates = (
+                ((.dates // []) | map(select(.type != "collected")))
+                + [{type:"collected", start:$pubdate, end:$pubdate}]
+              )
             ')"
 
           METADATA_PAYLOAD="$(jq -n --argjson md "$NEW_METADATA_ONLY" '{metadata: $md}')"
 
           echo "Metadata payload (sanity check):"
-          echo "$METADATA_PAYLOAD" | jq '{publication_date: .metadata.publication_date, grants: .metadata.grants, communities: .metadata.communities}'
+          echo "$METADATA_PAYLOAD" | jq '{publication_date: .metadata.publication_date, dates: .metadata.dates, grants: .metadata.grants, communities: .metadata.communities}'
+
           UPDATED="$(zenodo_api PUT "$ZENODO_BASE_URL/api/deposit/depositions/$TARGET_ID" "$METADATA_PAYLOAD")"
-          echo "$UPDATED" | jq '{id, state, submitted, title:.metadata.title, grants:.metadata.grants, communities:.metadata.communities}'
+          echo "Zenodo response after PUT:"
+          echo "$UPDATED" | jq '{id, state, submitted, publication_date: .metadata.publication_date}'
+          echo "::endgroup::"
+
+          echo "::group::Pre-publish validation"
+          CHECK="$(zenodo_api GET "$ZENODO_BASE_URL/api/deposit/depositions/$TARGET_ID")"
+          echo "$CHECK" | jq '.metadata | {title, publication_date, dates, grants, communities}'
+          PUBDATE_ON_ZENODO="$(echo "$CHECK" | jq -r '.metadata.publication_date // ""')"
+          if [ -z "$PUBDATE_ON_ZENODO" ] || [ "$PUBDATE_ON_ZENODO" = "null" ]; then
+            echo "ERROR: publication_date is still missing on Zenodo draft; refusing to publish."
+            exit 1
+          fi
           echo "::endgroup::"
 
           echo "::group::Publish"
@@ -312,4 +331,4 @@ jobs:
         run: |
           set -euo pipefail
           echo "Workflow completed at: $(date -u)"
-          echo "If it failed, inspect the grouped logs above (Zenodo headers/body are printed on errors)."
+          echo "If it failed, inspect the grouped logs above; Zenodo error bodies are printed to STDERR."
