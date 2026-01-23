@@ -1,0 +1,302 @@
+name: Weekly upload to Zenodo (from data-latest)
+
+on:
+  schedule:
+    # Weekly Monday 03:30 UTC (change as you like)
+    - cron: "30 3 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  zenodo-upload:
+    runs-on: ubuntu-latest
+    env:
+      # You can override this in repo Variables if you ever want sandbox:
+      #   https://sandbox.zenodo.org
+      ZENODO_BASE_URL: https://zenodo.org
+
+      # Required secrets (you said you already set these)
+      ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+      ZENODO_DEPOSITION_ID: ${{ secrets.ZENODO_DEPOSITION_ID }}
+      ZENODO_COMMUNITY: ${{ secrets.ZENODO_COMMUNITY }}
+      ZENODO_CREATOR_NAME: ${{ secrets.ZENODO_CREATOR_NAME }}
+
+      # For downloading GitHub release assets via `gh`
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout (not strictly required)
+        uses: actions/checkout@v4
+
+      - name: Ensure tools exist (jq, curl)
+        run: |
+          set -euo pipefail
+          which jq || (sudo apt-get update && sudo apt-get install -y jq)
+          which curl
+          which gh
+          jq --version
+          gh --version
+          curl --version | head -n 2
+
+      - name: Download latest release assets (data-latest)
+        run: |
+          set -euo pipefail
+
+          echo "::group::Locate GitHub release 'data-latest'"
+          gh release view data-latest --json tagName,name,createdAt,url,assets -q \
+            '{tag:.tagName,name:.name,createdAt:.createdAt,url:.url,assets:[.assets[].name]}' | jq .
+          echo "::endgroup::"
+
+          mkdir -p artifacts
+
+          echo "::group::Download assets (*_data.zip) from data-latest"
+          gh release download data-latest --pattern "*_data.zip" --dir artifacts
+          echo "::endgroup::"
+
+          echo "::group::List downloaded files"
+          ls -lah artifacts
+          echo "::endgroup::"
+
+          # Hard checks: ensure we got something
+          COUNT=$(ls -1 artifacts/*_data.zip 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$COUNT" -eq 0 ]; then
+            echo "ERROR: No *_data.zip files were downloaded from release 'data-latest'."
+            echo "Check that release assets exist and match pattern '*_data.zip'."
+            exit 1
+          fi
+
+      - name: Upload to Zenodo (create new version if needed, replace files, publish)
+        run: |
+          set -euo pipefail
+
+          # ---------- helpers ----------
+          require_env () {
+            local name="$1"
+            if [ -z "${!name:-}" ]; then
+              echo "ERROR: Missing env var $name"
+              exit 1
+            fi
+          }
+
+          # Curl wrapper that captures response body and fails with helpful output
+          api_json () {
+            local method="$1"; shift
+            local url="$1"; shift
+            local data="${1:-}"
+
+            local tmp
+            tmp="$(mktemp)"
+            local code
+
+            if [ -n "$data" ]; then
+              code=$(curl -sS -o "$tmp" -w "%{http_code}" \
+                -X "$method" \
+                -H "Content-Type: application/json" \
+                "$url?access_token=${ZENODO_TOKEN}" \
+                --data-binary "$data" || true)
+            else
+              code=$(curl -sS -o "$tmp" -w "%{http_code}" \
+                -X "$method" \
+                "$url?access_token=${ZENODO_TOKEN}" || true)
+            fi
+
+            echo "$code" > "${tmp}.code"
+            cat "$tmp" > "${tmp}.body"
+
+            if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+              echo "ERROR: Zenodo API call failed"
+              echo "  METHOD: $method"
+              echo "  URL:    $url"
+              echo "  CODE:   $code"
+              echo "  BODY:"
+              cat "${tmp}.body" | sed 's/access_token=[^"&]*/access_token=REDACTED/g'
+              exit 1
+            fi
+
+            cat "${tmp}.body"
+          }
+
+          api_nojson () {
+            local method="$1"; shift
+            local url="$1"; shift
+
+            local tmp
+            tmp="$(mktemp)"
+            local code
+            code=$(curl -sS -o "$tmp" -w "%{http_code}" -X "$method" \
+              "$url?access_token=${ZENODO_TOKEN}" || true)
+
+            if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+              echo "ERROR: Zenodo API call failed (non-json expected)"
+              echo "  METHOD: $method"
+              echo "  URL:    $url"
+              echo "  CODE:   $code"
+              echo "  BODY:"
+              cat "$tmp" | sed 's/access_token=[^"&]*/access_token=REDACTED/g'
+              exit 1
+            fi
+          }
+
+          # ---------- validate inputs ----------
+          echo "::group::Validate required secrets/env"
+          require_env ZENODO_TOKEN
+          require_env ZENODO_DEPOSITION_ID
+          require_env ZENODO_COMMUNITY
+          require_env ZENODO_CREATOR_NAME
+          require_env ZENODO_BASE_URL
+
+          if ! [[ "$ZENODO_DEPOSITION_ID" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: ZENODO_DEPOSITION_ID must be numeric, got: $ZENODO_DEPOSITION_ID"
+            exit 1
+          fi
+          echo "ZENODO_BASE_URL=$ZENODO_BASE_URL"
+          echo "ZENODO_DEPOSITION_ID=$ZENODO_DEPOSITION_ID"
+          echo "ZENODO_COMMUNITY=$ZENODO_COMMUNITY"
+          echo "ZENODO_CREATOR_NAME=$ZENODO_CREATOR_NAME"
+          echo "::endgroup::"
+
+          # ---------- figure out source release info for metadata ----------
+          echo "::group::Read GitHub release info for metadata"
+          RELEASE_JSON=$(gh release view data-latest --json tagName,url,createdAt,name)
+          echo "$RELEASE_JSON" | jq .
+          RELEASE_URL=$(echo "$RELEASE_JSON" | jq -r '.url')
+          RELEASE_TAG=$(echo "$RELEASE_JSON" | jq -r '.tagName')
+          RELEASE_DATE=$(echo "$RELEASE_JSON" | jq -r '.createdAt')
+          echo "Using release: $RELEASE_TAG ($RELEASE_URL) createdAt=$RELEASE_DATE"
+          echo "::endgroup::"
+
+          # ---------- fetch deposition ----------
+          echo "::group::Fetch Zenodo deposition"
+          DEP_URL="$ZENODO_BASE_URL/api/deposit/depositions/$ZENODO_DEPOSITION_ID"
+          DEP_JSON=$(api_json GET "$DEP_URL")
+          echo "$DEP_JSON" | jq '{id, state, submitted, title:.metadata.title, doi, conceptdoi, links}'
+          DEP_STATE=$(echo "$DEP_JSON" | jq -r '.state // empty')
+          DEP_SUBMITTED=$(echo "$DEP_JSON" | jq -r '.submitted // false')
+          echo "::endgroup::"
+
+          # Zenodo: if already published/submitted, you should create a new version
+          # `submitted=true` typically means published.
+          TARGET_ID="$ZENODO_DEPOSITION_ID"
+          if [ "$DEP_SUBMITTED" = "true" ] || [ "$DEP_STATE" = "done" ]; then
+            echo "::group::Deposition is published; create a NEW VERSION draft"
+            NEWVER_JSON=$(api_json POST "$ZENODO_BASE_URL/api/deposit/depositions/$ZENODO_DEPOSITION_ID/actions/newversion")
+            echo "$NEWVER_JSON" | jq .
+            # Follow latest_draft link to get the new draft deposition id
+            LATEST_DRAFT_URL=$(echo "$NEWVER_JSON" | jq -r '.links.latest_draft')
+            if [ -z "$LATEST_DRAFT_URL" ] || [ "$LATEST_DRAFT_URL" = "null" ]; then
+              echo "ERROR: Zenodo did not return links.latest_draft; cannot proceed."
+              exit 1
+            fi
+            DRAFT_JSON=$(api_json GET "$LATEST_DRAFT_URL")
+            TARGET_ID=$(echo "$DRAFT_JSON" | jq -r '.id')
+            echo "New draft deposition id: $TARGET_ID"
+            echo "::endgroup::"
+          else
+            echo "Deposition appears to be a draft; will update it in-place (id=$TARGET_ID)."
+          fi
+
+          # ---------- get bucket link ----------
+          echo "::group::Get bucket URL for deposition id=$TARGET_ID"
+          TARGET_JSON=$(api_json GET "$ZENODO_BASE_URL/api/deposit/depositions/$TARGET_ID")
+          BUCKET=$(echo "$TARGET_JSON" | jq -r '.links.bucket')
+          if [ -z "$BUCKET" ] || [ "$BUCKET" = "null" ]; then
+            echo "ERROR: Could not determine bucket URL from deposition."
+            echo "$TARGET_JSON" | jq .
+            exit 1
+          fi
+          echo "Bucket: $BUCKET"
+          echo "::endgroup::"
+
+          # ---------- delete existing files ----------
+          echo "::group::Delete existing files from draft deposition (id=$TARGET_ID)"
+          FILES=$(echo "$TARGET_JSON" | jq -r '.files[]?.id' || true)
+          if [ -z "${FILES:-}" ]; then
+            echo "No existing files to delete."
+          else
+            echo "$TARGET_JSON" | jq -r '.files[] | "\(.id)  \(.filename)  \(.filesize) bytes"'
+            while read -r fid; do
+              [ -n "$fid" ] || continue
+              echo "Deleting file id=$fid ..."
+              api_nojson DELETE "$ZENODO_BASE_URL/api/deposit/depositions/$TARGET_ID/files/$fid"
+            done <<< "$FILES"
+          fi
+          echo "::endgroup::"
+
+          # ---------- upload new files ----------
+          echo "::group::Upload new files to Zenodo bucket"
+          for f in artifacts/*_data.zip; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f")
+            size=$(stat -c%s "$f")
+            echo "Uploading: $name ($size bytes)"
+            # PUT to bucket
+            code=$(curl -sS -o /tmp/zenodo_put_body -w "%{http_code}" \
+              --upload-file "$f" \
+              "$BUCKET/$name?access_token=${ZENODO_TOKEN}" || true)
+            if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+              echo "ERROR: Upload failed for $name"
+              echo "  HTTP: $code"
+              echo "  Response:"
+              cat /tmp/zenodo_put_body | sed 's/access_token=[^"&]*/access_token=REDACTED/g'
+              exit 1
+            fi
+            echo "Uploaded OK: $name"
+          done
+          echo "::endgroup::"
+
+          # ---------- update metadata ----------
+          echo "::group::Update Zenodo metadata"
+          TODAY_UTC=$(date -u +%Y-%m-%d)
+          TITLE="DeFi hourly datasets (weekly snapshot) - ${TODAY_UTC}"
+          DESC=$(cat <<EOF
+          Weekly snapshot uploaded automatically from the GitHub rolling release \`${RELEASE_TAG}\`.
+
+          Source release: ${RELEASE_URL}
+          Release created at: ${RELEASE_DATE}
+
+          Contents: zipped datasets for AAVE, Uniswap, Curve, and ETH blocks mapping.
+          EOF
+          )
+
+          METADATA=$(jq -n \
+            --arg title "$TITLE" \
+            --arg desc "$DESC" \
+            --arg creator "$ZENODO_CREATOR_NAME" \
+            --arg community "$ZENODO_COMMUNITY" \
+            '{
+              metadata: {
+                upload_type: "dataset",
+                title: $title,
+                description: $desc,
+                creators: [
+                  { name: $creator }
+                ],
+                communities: [
+                  { identifier: $community }
+                ],
+                keywords: ["DeFi", "AAVE", "Uniswap", "Curve", "Ethereum", "hourly", "dataset"]
+              }
+            }')
+
+          echo "$METADATA" | jq .
+          UPDATED=$(api_json PUT "$ZENODO_BASE_URL/api/deposit/depositions/$TARGET_ID" "$METADATA")
+          echo "Metadata updated. Current record summary:"
+          echo "$UPDATED" | jq '{id, state, submitted, title:.metadata.title, conceptdoi, doi, links}'
+          echo "::endgroup::"
+
+          # ---------- publish ----------
+          echo "::group::Publish deposition"
+          PUB=$(api_json POST "$ZENODO_BASE_URL/api/deposit/depositions/$TARGET_ID/actions/publish")
+          echo "$PUB" | jq '{id, state, submitted, doi, conceptdoi, links}'
+          echo "Published!"
+          echo "Zenodo record page: $(echo "$PUB" | jq -r '.links.html // empty')"
+          echo "::endgroup::"
+
+      - name: Summary
+        if: always()
+        run: |
+          set -euo pipefail
+          echo "Workflow completed at: $(date -u)"
+          echo "If it failed, check the grouped logs above for the exact Zenodo API response."
