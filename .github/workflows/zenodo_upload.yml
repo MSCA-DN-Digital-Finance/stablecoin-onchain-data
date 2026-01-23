@@ -277,10 +277,6 @@ jobs:
           # Fetch current draft again (so we merge on top of what Zenodo has)
           CURRENT_DRAFT="$(zenodo_api GET "$ZENODO_BASE_URL/api/deposit/depositions/$TARGET_ID")"
 
-          # Build new metadata by modifying the existing .metadata and ensuring:
-          # - required community identifier is present
-          # - required grant is present
-          # - we only change title/description (no loss of ORCID, affiliation, license, etc.)
           NEW_METADATA_ONLY="$(echo "$CURRENT_DRAFT" | jq \
             --arg title "$TITLE" \
             --arg desc "$DESC" \
@@ -291,7 +287,7 @@ jobs:
             .metadata
             | .title = $title
             | .description = $desc
-            | .publication_date = $pubdate
+            | .publication_date = (.publication_date // $pubdate)
             | .communities = ((.communities // []) | map(select(.identifier != $community)) + [{identifier: $community}])
             | .grants = ((.grants // []) | map(select(.id != $grant)) + [{id: $grant}])
             ')"
@@ -299,8 +295,7 @@ jobs:
           METADATA_PAYLOAD="$(jq -n --argjson md "$NEW_METADATA_ONLY" '{metadata: $md}')"
 
           echo "Metadata payload (sanity check):"
-          echo "$METADATA_PAYLOAD" | jq '{metadata: {title: .metadata.title, description: .metadata.description, publication_date: .metadata.publication_date, has_grants: (.metadata.grants|length), grants: .metadata.grants, communities: .metadata.communities}}'
-
+          echo "$METADATA_PAYLOAD" | jq '{publication_date: .metadata.publication_date, grants: .metadata.grants, communities: .metadata.communities}'
           UPDATED="$(zenodo_api PUT "$ZENODO_BASE_URL/api/deposit/depositions/$TARGET_ID" "$METADATA_PAYLOAD")"
           echo "$UPDATED" | jq '{id, state, submitted, title:.metadata.title, grants:.metadata.grants, communities:.metadata.communities}'
           echo "::endgroup::"
