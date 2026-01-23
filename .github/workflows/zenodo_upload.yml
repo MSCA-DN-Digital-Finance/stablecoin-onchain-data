@@ -291,6 +291,7 @@ jobs:
             .metadata
             | .title = $title
             | .description = $desc
+            | .publication_date = $pubdate
             | .communities = ((.communities // []) | map(select(.identifier != $community)) + [{identifier: $community}])
             | .grants = ((.grants // []) | map(select(.id != $grant)) + [{id: $grant}])
             ')"
