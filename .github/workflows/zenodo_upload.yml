@@ -21,7 +21,10 @@ jobs:
       ZENODO_CREATOR_NAME: ${{ secrets.ZENODO_CREATOR_NAME }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Required by your community policy
+      # IMPORTANT:
+      # Zenodo deposit API expects the OpenAIRE/Zenodo grant identifier format for EU grants,
+      # not the grant DOI (10.3030/...).
+      # This is the value your community requires.
       ZENODO_REQUIRED_GRANT_ID: "10.13039/501100000780::101119635"
 
     steps:
@@ -135,6 +138,7 @@ jobs:
             fi
             set -e
 
+            # IMPORTANT: print diagnostics to STDERR so they are visible even when called via $(...)
             if [ "$curl_rc" -ne 0 ] || ! [[ "${http_code:-}" =~ ^[0-9]{3}$ ]]; then
               echo "ERROR: curl failed calling Zenodo" >&2
               echo "  METHOD: $method" >&2
@@ -214,7 +218,7 @@ jobs:
           echo "Bucket: $BUCKET"
           echo "::endgroup::"
 
-          echo "::group::Delete existing files in draft"
+          echo "::group::Delete existing files in draft (must be empty before some validations)"
           TARGET_JSON="$(zenodo_api GET "$ZENODO_BASE_URL/api/deposit/depositions/$TARGET_ID")"
           echo "$TARGET_JSON" | jq -r '.files[]? | "\(.id)  \(.filename)  \(.filesize) bytes"' || true
 
@@ -228,41 +232,19 @@ jobs:
           else
             echo "No files to delete."
           fi
+
+          # Re-check that there are no files
+          TARGET_JSON="$(zenodo_api GET "$ZENODO_BASE_URL/api/deposit/depositions/$TARGET_ID")"
+          REMAINING="$(echo "$TARGET_JSON" | jq -r '.files | length')"
+          echo "Remaining files after delete: $REMAINING"
+          if [ "$REMAINING" != "0" ]; then
+            echo "ERROR: Draft still has files after deletion; refusing to proceed."
+            echo "$TARGET_JSON" | jq '.files'
+            exit 1
+          fi
           echo "::endgroup::"
 
-          echo "::group::Upload files"
-          for f in artifacts/*_data.zip; do
-            [ -f "$f" ] || continue
-            name="$(basename "$f")"
-            size="$(stat -c%s "$f")"
-            echo "Uploading: $name ($size bytes) -> $BUCKET/$name"
-
-            body="$(mktemp)"
-            headers="$(mktemp)"
-
-            set +e
-            http_code=$(curl -sS \
-              --connect-timeout 20 --max-time 600 \
-              --retry 5 --retry-all-errors --retry-delay 2 \
-              -D "$headers" -o "$body" -w "%{http_code}" \
-              -H "Authorization: Bearer ${ZENODO_TOKEN}" \
-              --upload-file "$f" \
-              "$BUCKET/$name")
-            curl_rc=$?
-            set -e
-
-            if [ "$curl_rc" -ne 0 ] || ! [[ "${http_code:-}" =~ ^[0-9]{3}$ ]] || [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-              echo "ERROR: Upload failed for $name"
-              echo "  curl_rc=$curl_rc http_code='${http_code:-<empty>}'"
-              echo "---- response headers ----"; cat "$headers" || true
-              echo "---- response body ----"; cat "$body" || true
-              exit 1
-            fi
-
-            echo "Uploaded OK: $name (HTTP $http_code)"
-          done
-          echo "::endgroup::"
-
+          # Update metadata BEFORE uploading files (avoids Zenodo validation complaining about files state)
           echo "::group::Update metadata (preserve + enforce grant + force publication_date + fix dates)"
           TODAY_UTC="$(date -u +%Y-%m-%d)"
           PUBDATE="$TODAY_UTC"
@@ -291,8 +273,14 @@ jobs:
             | .title = $title
             | .description = $desc
             | .publication_date = $pubdate
+
+            # Ensure community is present
             | .communities = ((.communities // []) | map(select(.identifier != $community)) + [{identifier: $community}])
-            | .grants = ((.grants // []) | map(select(.id != $grant)) + [{id: $grant}])
+
+            # IMPORTANT: remove invalid grant DOI form if it exists, then enforce required OpenAIRE grant id
+            | .grants = ([{id: $grant}])
+
+            # Fix invalid "dates" entries (Zenodo requires start/end for collected)
             | .dates = (
                 ((.dates // []) | map(select(.type != "collected")))
                 + [{type:"collected", start:$pubdate, end:$pubdate}]
@@ -309,12 +297,55 @@ jobs:
           echo "$UPDATED" | jq '{id, state, submitted, publication_date: .metadata.publication_date}'
           echo "::endgroup::"
 
+          echo "::group::Upload files"
+          for f in artifacts/*_data.zip; do
+            [ -f "$f" ] || continue
+            name="$(basename "$f")"
+            size="$(stat -c%s "$f")"
+            echo "Uploading: $name ($size bytes) -> $BUCKET/$name"
+
+            body="$(mktemp)"
+            headers="$(mktemp)"
+
+            set +e
+            http_code=$(curl -sS \
+              --connect-timeout 20 --max-time 600 \
+              --retry 5 --retry-all-errors --retry-delay 2 \
+              -D "$headers" -o "$body" -w "%{http_code}" \
+              -H "Authorization: Bearer ${ZENODO_TOKEN}" \
+              --upload-file "$f" \
+              "$BUCKET/$name")
+            curl_rc=$?
+            set -e
+
+            if [ "$curl_rc" -ne 0 ] || ! [[ "${http_code:-}" =~ ^[0-9]{3}$ ]] || [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+              echo "ERROR: Upload failed for $name" >&2
+              echo "  curl_rc=$curl_rc http_code='${http_code:-<empty>}'" >&2
+              echo "---- response headers ----" >&2
+              cat "$headers" >&2 || true
+              echo "---- response body ----" >&2
+              cat "$body" >&2 || true
+              exit 1
+            fi
+
+            echo "Uploaded OK: $name (HTTP $http_code)"
+          done
+          echo "::endgroup::"
+
           echo "::group::Pre-publish validation"
           CHECK="$(zenodo_api GET "$ZENODO_BASE_URL/api/deposit/depositions/$TARGET_ID")"
           echo "$CHECK" | jq '.metadata | {title, publication_date, dates, grants, communities}'
+
           PUBDATE_ON_ZENODO="$(echo "$CHECK" | jq -r '.metadata.publication_date // ""')"
           if [ -z "$PUBDATE_ON_ZENODO" ] || [ "$PUBDATE_ON_ZENODO" = "null" ]; then
-            echo "ERROR: publication_date is still missing on Zenodo draft; refusing to publish."
+            echo "ERROR: publication_date is missing on Zenodo draft; refusing to publish."
+            exit 1
+          fi
+
+          GRANT_OK="$(echo "$CHECK" | jq -r --arg g "$ZENODO_REQUIRED_GRANT_ID" 'any(.metadata.grants[]?; .id == $g)')"
+          if [ "$GRANT_OK" != "true" ]; then
+            echo "ERROR: Required grant is missing on Zenodo draft; refusing to publish."
+            echo "Expected: $ZENODO_REQUIRED_GRANT_ID"
             exit 1
           fi
           echo "::endgroup::"
@@ -331,4 +362,4 @@ jobs:
         run: |
           set -euo pipefail
           echo "Workflow completed at: $(date -u)"
-          echo "If it failed, inspect the grouped logs above; Zenodo error bodies are printed to STDERR."
+          echo "If it failed, inspect the grouped logs above (Zenodo error bodies print to STDERR)."
