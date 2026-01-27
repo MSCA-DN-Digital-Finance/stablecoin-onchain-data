@@ -43,7 +43,7 @@ def format_curve_3pool_hourly(df_raw: pd.DataFrame) -> pd.DataFrame:
     df.index = df.index.ceil('h')
     full_idx = pd.date_range(df.index[0].ceil("h"),
                             df.index[-1].ceil("h"),
-                            freq="1H")
+                            freq="1h")
     df = df.reindex(full_idx,method = 'ffill')
     df = df.iloc[:-1,:]
 

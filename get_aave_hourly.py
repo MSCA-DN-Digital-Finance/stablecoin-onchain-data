@@ -140,7 +140,7 @@ def get_data_coin_aave(name, start_ts, endpoint):
     df = df.groupby(level = 0).mean()
     full_idx = pd.date_range(df.index[0].ceil("h"),
                             df.index[-1].ceil("h"),
-                            freq="1H")
+                            freq="1h")
     df = df.reindex(full_idx,method = 'ffill')
     df = df.iloc[:-1,:]
     return df 
