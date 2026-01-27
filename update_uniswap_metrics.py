@@ -390,7 +390,7 @@ if __name__ == "__main__":
         try:
             try:
                 old = pd.read_parquet(f"./data/Uniswap/{pair}_hourly_metrics.parquet")
-                start_ts = int(old.query('feeTier == 100').datetime.iloc[-1])
+                start_ts = int(old.query('feeTier == 100').datetime.iloc[-1].timestamp())
             except Exception as e :
                 print('----- Original dataset not found ------', e)
             else:    
