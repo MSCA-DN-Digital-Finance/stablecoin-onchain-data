@@ -84,7 +84,7 @@ jobs:
       - name: Build Plotly HTML w/ updated data
         run: |
           mkdir -p site
-          python post_crv_interactive.py
+          python plot_crv_interactive.py
       # 7) checkout GitHub Pages repo
       - name: Checkout Pages repo (ochaff.github.io)
         uses: actions/checkout@v4
