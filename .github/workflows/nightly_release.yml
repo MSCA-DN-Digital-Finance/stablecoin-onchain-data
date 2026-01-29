@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install -U pip
-          pip install pandas requests python-dotenv pyarrow tqdm
+          pip install pandas requests python-dotenv pyarrow tqdm plotly
       # 1) Download previous state from rolling release (if it exists)
       - name: Download latest dataset state (optional)
         env:
@@ -80,3 +80,30 @@ jobs:
             fi
             gh release upload data-latest "$f"
           done
+      # 6) Build updated Plotly figure 
+      - name: Build Plotly HTML w/ updated data
+        run: |
+          mkdir -p site
+          python post_crv_interactive.py
+      # 7) checkout GitHub Pages repo
+      - name: Checkout Pages repo (ochaff.github.io)
+        uses: actions/checkout@v4
+        with:
+          repository: ochaff/ochaff.github.io
+          ref: main
+          token: ${{ secrets.PAGES_REPO_TOKEN }}
+          path: pages
+      # 8) Copy updated figure to pages repo
+      - name: Copy site into repo
+        run: |
+          cp -f site/crv_balance.html pages/figures/
+      
+      # 9) Commit and push updated figure
+      - name: Commit and push Pages update
+        run: |
+          cd pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Update Plotly figure" || exit 0
+          git push origin main
