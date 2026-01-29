@@ -85,6 +85,7 @@ jobs:
         run: |
           mkdir -p site
           python plot_crv_interactive.py
+          python plot_uni_interactive.py
       # 7) checkout GitHub Pages repo
       - name: Checkout Pages repo (ochaff.github.io)
         uses: actions/checkout@v4
@@ -97,6 +98,7 @@ jobs:
       - name: Copy site into repo
         run: |
           cp -f site/crv_balance.html pages/figures/
+          cp -f site/uni_liquidity.html pages/figures/
       
       # 9) Commit and push updated figure
       - name: Commit and push Pages update
@@ -105,5 +107,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Update Plotly figure" || exit 0
+          git commit -m "Update Plotly figures" || exit 0
           git push origin main
