@@ -1,12 +1,10 @@
 import pandas as pd 
-from dotenv import load_dotenv
 import os
 import time
 import json
 import requests
 from pathlib import Path
 
-load_dotenv()
 
 API_KEY = os.environ.get("GRAPH_API_KEY") 
 

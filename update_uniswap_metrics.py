@@ -6,8 +6,6 @@ import requests
 import pandas as pd
 from tqdm import tqdm
 import os 
-from dotenv import load_dotenv
-load_dotenv()
 
 
 def gql(query: str, variables: dict, retries: int = 6, backoff: float = 0.8) -> dict:

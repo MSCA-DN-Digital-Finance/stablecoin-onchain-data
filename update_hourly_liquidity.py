@@ -3,8 +3,7 @@ import os, time, requests
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone, timedelta
-from dotenv import load_dotenv
-load_dotenv()
+
 
 API_KEY = os.environ.get("GRAPH_API_KEY") 
 

@@ -3,8 +3,7 @@ from __future__ import annotations
 import os, time, requests
 import pandas as pd
 from datetime import datetime, timezone, timedelta
-from dotenv import load_dotenv 
-load_dotenv()
+
 
 
 # --- add near your other endpoints / env vars ---
