@@ -49,6 +49,7 @@ jobs:
           python update_uniswap_metrics.py
           python update_hourly_liquidity.py
           python liquidations.py
+          python eth_oracle.py
       # 3) Package output
       - name: Zip dataset
         run: |
