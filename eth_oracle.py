@@ -13,7 +13,6 @@ API_KEY = os.environ.get("GRAPH_API_KEY")
 SUBGRAPH_ID = "39QtNcs7YrvJUvh2sNVGFTKLeahMBpB3BKWypPrSNYLc"
 ENDPOINT = f"https://gateway.thegraph.com/api/{API_KEY}/subgraphs/id/{SUBGRAPH_ID}"
 
-ASSET_PAIR = "ETH/USD"
 CHAINLINK_DECIMALS = 8
 
 
@@ -127,6 +126,7 @@ def update_chainlink_ethusd_parquet(
     endpoint: str,
     events_path: str = "./data/ETH_blocks/Chainlink/ethusd_oracle_events.parquet",
     hourly_path: str = "./data/ETH_blocks/Chainlink/ethusd_oracle_hourly.parquet",
+    asset_pair: str = "ETH/USD",
 ):
     events_path = Path(events_path)
     hourly_path = Path(hourly_path)
@@ -144,21 +144,21 @@ def update_chainlink_ethusd_parquet(
         last_ts = int(prev_events["timestamp"].dropna().iloc[-1])
         start_ts = max(0, last_ts - 3600)
 
-        new_events = fetch_price_updates(endpoint, ASSET_PAIR, start_ts=start_ts, batch=1000)
+        new_events = fetch_price_updates(endpoint, asset_pair, start_ts=start_ts, batch=1000)
         if not new_events.empty:
             all_events = pd.concat([prev_events, new_events], axis=0)
             all_events = all_events[~all_events["id"].duplicated(keep="last")]
             all_events.sort_index(inplace=True)
             all_events.to_parquet(events_path)
-            print(f"----- Updated Chainlink {ASSET_PAIR} events: +{len(new_events)} -----")
+            print(f"----- Updated Chainlink {asset_pair} events: +{len(new_events)} -----")
         else:
             all_events = prev_events
-            print(f"----- No new Chainlink {ASSET_PAIR} events -----")
+            print(f"----- No new Chainlink {asset_pair} events -----")
 
     except FileNotFoundError:
-        all_events = fetch_price_updates(endpoint, ASSET_PAIR, start_ts=0, batch=1000)
+        all_events = fetch_price_updates(endpoint, asset_pair, start_ts=0, batch=1000)
         all_events.to_parquet(events_path)
-        print(f"----- Collected FULL Chainlink {ASSET_PAIR} events: {len(all_events)} -----")
+        print(f"----- Collected FULL Chainlink {asset_pair} events: {len(all_events)} -----")
 
     # -------- update hourly series (ALWAYS extend to current hour) --------
     try:
@@ -188,7 +188,7 @@ def update_chainlink_ethusd_parquet(
 
         hourly = hourly[~hourly.index.duplicated(keep="last")]
         hourly.to_parquet(hourly_path)
-        print(f"----- Updated Chainlink {ASSET_PAIR} hourly series (extended to now) -----")
+        print(f"----- Updated Chainlink {asset_pair} hourly series (extended to now) -----")
 
     except FileNotFoundError:
         if all_events.empty:
@@ -201,11 +201,16 @@ def update_chainlink_ethusd_parquet(
             hourly = to_hourly_price(all_events, end_time=now_hour)
 
         hourly.to_parquet(hourly_path)
-        print(f"----- Built FULL Chainlink {ASSET_PAIR} hourly series (extended to now) -----")
+        print(f"----- Built FULL Chainlink {asset_pair} hourly series (extended to now) -----")
 
 
 if __name__ == "__main__":
-    try:
-        update_chainlink_ethusd_parquet(ENDPOINT)
-    except Exception as e:
-        print(f"[ERROR] chainlink_ethusd -> {e}")
+    for pair in ["ETH/USD", "BTC/USD"]:
+        try:
+            update_chainlink_ethusd_parquet(ENDPOINT, 
+                                            events_path=f"./data/ETH_blocks/Chainlink/{pair.lower().replace('/', '')}_oracle_events.parquet", 
+                                            hourly_path=f"./data/ETH_blocks/Chainlink/{pair.lower().replace('/', '')}_oracle_hourly.parquet", 
+                                            asset_pair=pair
+                                            )
+        except Exception as e:
+            print(f"[ERROR] chainlink_ethusd -> {e}")
