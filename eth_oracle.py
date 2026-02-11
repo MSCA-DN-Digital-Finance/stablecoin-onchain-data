@@ -109,7 +109,7 @@ def to_hourly_price(df_events: pd.DataFrame, end_time: pd.Timestamp | None = Non
     if df_events is None or df_events.empty:
         return pd.DataFrame()
 
-    end_time = (end_time or pd.Timestamp.utcnow()).floor("h")
+    end_time = (end_time or pd.Timestamp.now('UTC')).floor("h")
 
     # Use last update observed within the hour, then ffill across hours
     hourly = df_events[["price_usd", "price_raw"]].resample("1h").last()
@@ -133,7 +133,7 @@ def update_chainlink_ethusd_parquet(
     events_path.parent.mkdir(parents=True, exist_ok=True)
     hourly_path.parent.mkdir(parents=True, exist_ok=True)
 
-    now_hour = pd.Timestamp.utcnow().floor("h")
+    now_hour = pd.Timestamp.now('UTC').floor("h")
 
     # -------- update raw events --------
     try:
