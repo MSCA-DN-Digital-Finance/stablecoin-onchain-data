@@ -148,7 +148,7 @@ def update_liquidations_parquet(version: str, endpoint: str, events_path: str, h
     events_path.parent.mkdir(parents=True, exist_ok=True)
     hourly_path.parent.mkdir(parents=True, exist_ok=True)
 
-    now_hour = pd.Timestamp.utcnow().floor("h")
+    now_hour = pd.Timestamp.now("UTC").floor("h")
 
     # ---- update events ----
     try:
