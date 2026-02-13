@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 from dotenv import load_dotenv
+import numpy as np 
 
 load_dotenv()
 API_KEY = os.environ.get("GRAPH_API_KEY")
