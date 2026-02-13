@@ -203,6 +203,130 @@ def update_chainlink_ethusd_parquet(
         hourly.to_parquet(hourly_path)
         print(f"----- Built FULL Chainlink {asset_pair} hourly series (extended to now) -----")
 
+def build_usd_index_hourly_from_pairs(
+        hourly_by_pair: dict[str, pd.DataFrame],
+        invert_pair: dict[str, bool],
+        weights: dict[str, float] | None = None,
+        end_time: pd.Timestamp | None = None,
+    ) -> pd.DataFrame:
+        """
+        Build a USD index as a weighted geometric mean of normalized FX rates.
+        We compute "foreign per 1 USD" consistently:
+        - if feed is EUR/USD (USD per 1 EUR), invert to get USD/EUR (EUR per 1 USD)
+        - similarly for GBP/USD, JPY/USD, etc.
+
+        Index = 100 * exp( sum_i w_i * ln( (fx_i / fx_i_base) ) )
+        """
+        if not hourly_by_pair:
+            return pd.DataFrame()
+
+        end_time = (end_time or pd.Timestamp.now("UTC")).floor("h")
+
+        # default equal weights
+        pairs = list(hourly_by_pair.keys())
+        if weights is None:
+            weights = {p: 1.0 / len(pairs) for p in pairs}
+
+        # build a common hourly index
+        min_start = None
+        for p, df in hourly_by_pair.items():
+            if df is None or df.empty:
+                continue
+            idx0 = df.index.min()
+            min_start = idx0 if min_start is None else min(min_start, idx0)
+
+        if min_start is None:
+            return pd.DataFrame()
+
+        full_idx = pd.date_range(start=min_start.floor("h"), end=end_time, freq="1h", tz="UTC")
+
+        # prepare aligned FX series (foreign per USD)
+        fx = {}
+        for p, df in hourly_by_pair.items():
+            if df is None or df.empty or "price_usd" not in df.columns:
+                continue
+
+            s = pd.to_numeric(df["price_usd"], errors="coerce").reindex(full_idx).ffill()
+
+            if invert_pair.get(p, False):
+                s = 1.0 / s
+
+            fx[p] = s
+
+        if not fx:
+            return pd.DataFrame()
+
+        fx_df = pd.DataFrame(fx)
+
+        # choose a base time where all series are available (first row with no NaNs)
+        base_row = fx_df.dropna().head(1)
+        if base_row.empty:
+            return pd.DataFrame()
+
+        base_vals = base_row.iloc[0]
+        normalized = fx_df / base_vals
+
+        # weighted geometric mean
+        w = pd.Series({p: weights.get(p, 0.0) for p in normalized.columns})
+        w = w / w.sum()
+
+        log_index = (np.log(normalized) * w).sum(axis=1)
+        usd_index = 100.0 * np.exp(log_index)
+
+        out = pd.DataFrame(
+            {
+                "usd_index": usd_index,
+                **{f"{p}_fx_foreign_per_usd": fx_df[p] for p in fx_df.columns},
+            },
+            index=full_idx,
+        )
+        return out
+def update_usd_index_parquet(
+        endpoint: str,
+        fx_pairs: list[str],
+        invert_pair: dict[str, bool],
+        weights: dict[str, float] | None = None,
+        fx_dir: str = "./data/ETH_blocks/Chainlink/fx",
+        index_path: str = "./data/ETH_blocks/Chainlink/usd_index_hourly.parquet",
+    ):
+        fx_dir = Path(fx_dir)
+        fx_dir.mkdir(parents=True, exist_ok=True)
+        index_path = Path(index_path)
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # 1) update each FX pair using your existing function (events + hourly)
+        for pair in fx_pairs:
+            events_path = fx_dir / f"{pair.lower().replace('/','')}_events.parquet"
+            hourly_path = fx_dir / f"{pair.lower().replace('/','')}_hourly.parquet"
+
+            update_chainlink_ethusd_parquet(
+                endpoint,
+                events_path=str(events_path),
+                hourly_path=str(hourly_path),
+                asset_pair=pair,
+            )
+
+        # 2) load the hourly parquets and build the index
+        hourly_by_pair = {}
+        for pair in fx_pairs:
+            hourly_path = fx_dir / f"{pair.lower().replace('/','')}_hourly.parquet"
+            if hourly_path.exists():
+                df = pd.read_parquet(hourly_path)
+                df.index = pd.to_datetime(df.index, utc=True)
+                hourly_by_pair[pair] = df
+
+        usd_index_df = build_usd_index_hourly_from_pairs(
+            hourly_by_pair=hourly_by_pair,
+            invert_pair=invert_pair,
+            weights=weights,
+            end_time=pd.Timestamp.now("UTC").floor("h"),
+        )
+
+        usd_index_df.to_parquet(index_path)
+        print(f"----- Updated USD index hourly series -> {index_path} -----")
+
+
+
 
 if __name__ == "__main__":
     for pair in ["ETH/USD", "BTC/USD"]:
@@ -214,3 +338,22 @@ if __name__ == "__main__":
                                             )
         except Exception as e:
             print(f"[ERROR] chainlink_ethusd -> {e}")
+
+    # USD index (approx) from FX feeds
+    fx_pairs = ["EUR/USD", "GBP/USD", "JPY/USD"] 
+    invert_pair = {p: True for p in fx_pairs}     
+
+    # optional weights (otherwise equal-weight)
+    weights = {"EUR/USD": 0.5, "JPY/USD": 0.3, "GBP/USD": 0.2}
+
+    try:
+        update_usd_index_parquet(
+            ENDPOINT,
+            fx_pairs=fx_pairs,
+            invert_pair=invert_pair,
+            weights=weights,
+            fx_dir="./data/ETH_blocks/Chainlink/fx",
+            index_path="./data/ETH_blocks/Chainlink/usd_index_hourly.parquet",
+        )
+    except Exception as e:
+        print(f"[ERROR] USD index -> {e}")
