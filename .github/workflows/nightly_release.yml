@@ -50,6 +50,7 @@ jobs:
           python update_hourly_liquidity.py
           python liquidations.py
           python eth_oracle.py
+          python swap_size_curve.py
       # 3) Package output
       - name: Zip dataset
         run: |
