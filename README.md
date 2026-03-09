@@ -1,9 +1,5 @@
 # Stablecoin Onchain data
-
-Code citation :
-[![DOI](https://zenodo.org/badge/1138117387.svg)](https://doi.org/10.5281/zenodo.18338843)
-Dataset citation :
-[![DOI](https://zenodo.org/badge/18339067.svg)](https://doi.org/10.5281/zenodo.18339067)
+[![DOI](.zenodo.18339068.svg)](https://doi.org/10.5281/zenodo.18339067)
 
 This daily release contains hourly data regarding stablecoins on major DeFi venues. All the data is collected from subgraphs and aggregated into ready-to-use parquet files. 
 
@@ -36,6 +32,7 @@ This daily release contains hourly data regarding stablecoins on major DeFi venu
     ├── USDC_USDT_hourly_metrics        # Hourly metrics: swaps, TVL, net flows, etc.
     ├── DAI_USDC_hourly_metrics         # Hourly metrics: swaps, TVL, net flows, etc.
     ├── hourly_pool_state               # helper dataset for the liquidity curve collection
+    ├── hourly_positions_full           # Hourly snapshot of opened liquidity positions
     ├── hourly_liquidity_full           # ±50 ticks centered on the peg tick (hourly snapshot)
     └── hourly_liquidity_pricecentered  # ±50 ticks centered on current price tick (hourly snapshot)
 ```
@@ -83,6 +80,8 @@ This repository provides:
     - ±50 ticks around the peg tick
     - ±50 ticks around the current price tick
 - Swap size impact curves around the current active tick
+- Full hourly snaphots of active positions, including owner adresses, liquidity size and range. 
+- Non NFPM positions (incl. MEV bots) are also tracked via direct Mints/Burns on the pool
 
 These snapshots help analyze how liquidity migrates during normal times vs. depeg events.
 
