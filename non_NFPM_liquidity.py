@@ -12,8 +12,7 @@ import requests
 # Config
 # ============================================================
 
-# API_KEY = os.environ.get("GRAPH_API_KEY")
-API_KEY = "742e9c59cfc7d2d059d7f36fd0921294"
+API_KEY = os.environ.get("GRAPH_API_KEY")
 
 SUBGRAPH_ID = "5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV"
 ENDPOINT = f"https://gateway.thegraph.com/api/{API_KEY}/subgraphs/id/{SUBGRAPH_ID}"
