@@ -42,6 +42,7 @@ jobs:
       - name: Run data collection
         env:
           GRAPH_API_KEY: ${{ secrets.GRAPH_API_KEY }}
+          ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
         run: |
           python get_aave_hourly.py
           python update_blocks_to_time.py
@@ -52,6 +53,7 @@ jobs:
           python eth_oracle.py
           python LP_distribution.py
           python non_NFPM_liquidity.py
+          python update_3CRV_events.py
           python swap_size_curve.py
       # 3) Package output
       - name: Zip dataset
