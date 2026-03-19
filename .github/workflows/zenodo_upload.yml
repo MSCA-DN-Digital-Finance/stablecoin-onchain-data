@@ -1,18 +1,21 @@
-name: Weekly upload to Zenodo (from data-latest)
-
+name: Upload to Zenodo (from data-latest)
 on:
-  schedule:
-    # Weekly Monday 03:30 UTC
-    - cron: "30 3 * * 1"
+  workflow_run:
+    workflows: ["Nightly DeFi Data Update (Release)"]
+    types: [completed]
   workflow_dispatch: {}
 
 permissions:
   contents: read
 
+concurrency:
+  group: zenodo-upload
+  cancel-in-progress: false
+
 jobs:
   zenodo-upload:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-
     env:
       ZENODO_BASE_URL: https://zenodo.org
       ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
@@ -248,10 +251,10 @@ jobs:
           echo "::group::Update metadata (preserve + enforce grant + force publication_date + fix dates)"
           TODAY_UTC="$(date -u +%Y-%m-%d)"
           PUBDATE="$TODAY_UTC"
-          TITLE="Stablecoin DeFi Hourly Dataset (weekly snapshot) - ${TODAY_UTC}"
+          TITLE="Stablecoin DeFi Hourly Dataset - ${TODAY_UTC}"
 
           DESC="$(cat <<EOF
-          Weekly snapshot uploaded automatically from the GitHub rolling release \`${RELEASE_TAG}\`.
+          Automatically uploaded daily snapshot from the GitHub rolling release \`${RELEASE_TAG}\`.
 
           Source release: ${RELEASE_URL}
           Release created at: ${RELEASE_DATE}
