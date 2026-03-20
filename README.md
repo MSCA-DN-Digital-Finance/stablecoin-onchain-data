@@ -15,7 +15,9 @@ This daily release contains hourly data regarding stablecoins on major DeFi venu
 │       └── events                      # Liquidation events (v2 & v3, ETH)
 │
 ├── Curve/
-│   └── curve_3pool_hourly              # Hourly metrics for Curve 3pool (ETH)
+│   ├── curve_3pool_hourly              # Hourly metrics for Curve 3pool (ETH)
+│   ├── 3CRV_lpevents                   # Events on the 3CRV LP token (Mints, Burns, Transfers)
+│   └── 3CRV_swapevents                 # Events on the 3CRV pool (Token Swaps)
 │
 ├── ETH_blocks/
 │   ├── hourly_blocks                   # Closest Ethereum block per hour (UTC) since 2022-01-01
@@ -67,6 +69,9 @@ This repository provides:
 - Hourly metrics for the Curve 3pool, suitable for tracking:
     - pool liquidity conditions
     - imbalances (when one stablecoin is being heavily swapped in/out)
+- Full historical events for both the 3pool LP token and the pool itself :
+    - Activity on LP token (mints burns and liquidity transfers)
+    - Activity on the pool (Token swaps)
 
 ## Uniswap (Ethereum) — Concentrated liquidity stablecoin pools + liquidity distribution
 
