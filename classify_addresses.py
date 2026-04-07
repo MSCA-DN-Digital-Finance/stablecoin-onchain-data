@@ -25,8 +25,8 @@ log = logging.getLogger(__name__)
 
 ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY")
 URL = "https://api.etherscan.io/v2/api"
-CACHE_PATH = "data/Curve/address_book.json"
-PARQUET_PATH = "data/Curve/3CRV_lpevents.parquet"
+CACHE_PATH = "./data/Curve/address_book.json"
+PARQUET_PATH = "./data/Curve/3CRV_lpevents.parquet"
 ZERO = "0x0000000000000000000000000000000000000000"
 
 # Rate-limit: stay under 5 calls/sec for free tier
