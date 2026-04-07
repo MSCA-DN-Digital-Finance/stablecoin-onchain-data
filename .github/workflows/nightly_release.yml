@@ -55,6 +55,7 @@ jobs:
           python non_NFPM_liquidity.py
           python update_3CRV_events.py
           python swap_size_curve.py
+          python classify_addresses.py
       # 3) Package output
       - name: Zip dataset
         run: |
