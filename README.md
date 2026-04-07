@@ -17,6 +17,7 @@ This daily release contains hourly data regarding stablecoins on major DeFi venu
 ├── Curve/
 │   ├── curve_3pool_hourly              # Hourly metrics for Curve 3pool (ETH)
 │   ├── 3CRV_lpevents                   # Events on the 3CRV LP token (Mints, Burns, Transfers)
+│   ├── address_book.json               # Book of addresses with > 100 LP flow (EOA classification)
 │   └── 3CRV_swapevents                 # Events on the 3CRV pool (Token Swaps)
 │
 ├── ETH_blocks/
@@ -41,8 +42,8 @@ This daily release contains hourly data regarding stablecoins on major DeFi venu
 
 # Data conventions
 
-- **Timezone**: all hourly series are aligned to UTC hours
-- **Granularity**: most datasets are hourly, with some event-level tables and some daily series
+- **Timezone**: all hourly series are aligned to UTC hours since 2022-01-01
+- **Granularity**: datasets are hourly except event-level tables
 - **Chain**: Ethereum mainnet
 - **Source**: The Graph subgraphs (protocol-specific)
 
@@ -72,6 +73,8 @@ This repository provides:
 - Full historical events for both the 3pool LP token and the pool itself :
     - Activity on LP token (mints burns and liquidity transfers)
     - Activity on the pool (Token swaps)
+- An address of all active LP addresses (> 100 LP historical flow):
+    - Distinction between EOAs and smart contracts for LP monitoring   
 
 ## Uniswap (Ethereum) — Concentrated liquidity stablecoin pools + liquidity distribution
 
