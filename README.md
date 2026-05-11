@@ -36,6 +36,7 @@ This daily release contains hourly data regarding stablecoins on major DeFi venu
     ├── DAI_USDC_hourly_metrics         # Hourly metrics: swaps, TVL, net flows, etc.
     ├── hourly_pool_state               # helper dataset for the liquidity curve collection
     ├── hourly_positions_full           # Hourly snapshot of opened liquidity positions
+    ├── hourly_non_nfpm_mint_burn       # Event data for Non-NFPM Mints/Burn on the USDC-USDT pool
     ├── hourly_liquidity_full           # ±50 ticks centered on the peg tick (hourly snapshot)
     └── hourly_liquidity_pricecentered  # ±50 ticks centered on current price tick (hourly snapshot)
 ```
