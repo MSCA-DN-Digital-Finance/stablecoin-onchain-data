@@ -1,4 +1,5 @@
 name: Upload to Zenodo (from data-latest)
+
 on:
   workflow_run:
     workflows: ["Nightly DeFi Data Update (Release)"]
@@ -16,6 +17,7 @@ jobs:
   zenodo-upload:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+
     env:
       ZENODO_BASE_URL: https://zenodo.org
       ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
@@ -29,6 +31,18 @@ jobs:
       # not the grant DOI (10.3030/...).
       # This is the value your community requires.
       ZENODO_REQUIRED_GRANT_ID: "10.13039/501100000780::101119635"
+
+      # README preview files.
+      # README is uploaded as 00_README.md so it appears first and is likely used
+      # by Zenodo as the default preview.
+      ZENODO_README_SOURCE: README.md
+      ZENODO_README_ASSET: 00_README.md
+
+      # Your README uses this local SVG badge:
+      # [![DOI](.zenodo.18339068.svg)](...)
+      # Upload it too so the relative image can resolve in Zenodo preview.
+      ZENODO_BADGE_SOURCE: .zenodo.18339068.svg
+      ZENODO_BADGE_ASSET: .zenodo.18339068.svg
 
     steps:
       - name: Checkout
@@ -74,6 +88,45 @@ jobs:
             exit 1
           fi
 
+      - name: Add README and DOI badge to Zenodo artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "::group::Add README"
+
+          if [ ! -f "$ZENODO_README_SOURCE" ]; then
+            echo "ERROR: README source file not found: $ZENODO_README_SOURCE"
+            exit 1
+          fi
+
+          mkdir -p artifacts
+          cp "$ZENODO_README_SOURCE" "artifacts/$ZENODO_README_ASSET"
+
+          echo "Added README for Zenodo:"
+          ls -lah "artifacts/$ZENODO_README_ASSET"
+
+          echo "::endgroup::"
+
+          echo "::group::Add local DOI badge SVG"
+
+          if [ ! -f "$ZENODO_BADGE_SOURCE" ]; then
+            echo "ERROR: DOI badge SVG not found: $ZENODO_BADGE_SOURCE"
+            echo "Your README references this file locally, so it should be uploaded too."
+            exit 1
+          fi
+
+          cp "$ZENODO_BADGE_SOURCE" "artifacts/$ZENODO_BADGE_ASSET"
+
+          echo "Added DOI badge SVG for Zenodo:"
+          ls -lah "artifacts/$ZENODO_BADGE_ASSET"
+
+          echo "::endgroup::"
+
+          echo "::group::Final artifact list"
+          ls -lah artifacts
+          echo "::endgroup::"
+
       - name: Upload to Zenodo (robust logs + retries)
         shell: bash
         run: |
@@ -94,6 +147,10 @@ jobs:
           require_env ZENODO_COMMUNITY
           require_env ZENODO_CREATOR_NAME
           require_env ZENODO_REQUIRED_GRANT_ID
+          require_env ZENODO_README_SOURCE
+          require_env ZENODO_README_ASSET
+          require_env ZENODO_BADGE_SOURCE
+          require_env ZENODO_BADGE_ASSET
 
           if ! [[ "$ZENODO_DEPOSITION_ID" =~ ^[0-9]+$ ]]; then
             echo "ERROR: ZENODO_DEPOSITION_ID must be numeric, got: $ZENODO_DEPOSITION_ID"
@@ -105,6 +162,10 @@ jobs:
           echo "ZENODO_COMMUNITY=$ZENODO_COMMUNITY"
           echo "ZENODO_CREATOR_NAME=$ZENODO_CREATOR_NAME"
           echo "ZENODO_REQUIRED_GRANT_ID=$ZENODO_REQUIRED_GRANT_ID"
+          echo "ZENODO_README_SOURCE=$ZENODO_README_SOURCE"
+          echo "ZENODO_README_ASSET=$ZENODO_README_ASSET"
+          echo "ZENODO_BADGE_SOURCE=$ZENODO_BADGE_SOURCE"
+          echo "ZENODO_BADGE_ASSET=$ZENODO_BADGE_ASSET"
           echo "::endgroup::"
 
           zenodo_api() {
@@ -259,7 +320,7 @@ jobs:
           Source release: ${RELEASE_URL}
           Release created at: ${RELEASE_DATE}
 
-          Files included: AAVE, Uniswap, Curve, ETH blocks mapping (ZIP archives).
+          Files included: README, DOI badge SVG, AAVE, Uniswap, Curve, ETH blocks mapping and Chainlink data ZIP archives.
           EOF
           )"
 
@@ -301,7 +362,36 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Upload files"
-          for f in artifacts/*_data.zip; do
+
+          README_ARTIFACT="artifacts/$ZENODO_README_ASSET"
+          BADGE_ARTIFACT="artifacts/$ZENODO_BADGE_ASSET"
+
+          if [ ! -f "$README_ARTIFACT" ]; then
+            echo "ERROR: README artifact missing: $README_ARTIFACT"
+            exit 1
+          fi
+
+          if [ ! -f "$BADGE_ARTIFACT" ]; then
+            echo "ERROR: DOI badge SVG artifact missing: $BADGE_ARTIFACT"
+            exit 1
+          fi
+
+          mapfile -t ZIP_FILES < <(find artifacts -maxdepth 1 -type f -name '*_data.zip' | sort)
+
+          if [ "${#ZIP_FILES[@]}" -eq 0 ]; then
+            echo "ERROR: No *_data.zip files found in artifacts."
+            exit 1
+          fi
+
+          # Upload order matters for preview behavior.
+          # Zenodo does not expose a documented API flag for "default preview file",
+          # so README is uploaded first and named 00_README.md.
+          UPLOAD_FILES=("$README_ARTIFACT" "$BADGE_ARTIFACT" "${ZIP_FILES[@]}")
+
+          echo "Upload order:"
+          printf ' - %s\n' "${UPLOAD_FILES[@]}"
+
+          for f in "${UPLOAD_FILES[@]}"; do
             [ -f "$f" ] || continue
             name="$(basename "$f")"
             size="$(stat -c%s "$f")"
@@ -337,7 +427,12 @@ jobs:
 
           echo "::group::Pre-publish validation"
           CHECK="$(zenodo_api GET "$ZENODO_BASE_URL/api/deposit/depositions/$TARGET_ID")"
+
+          echo "Metadata check:"
           echo "$CHECK" | jq '.metadata | {title, publication_date, dates, grants, communities}'
+
+          echo "Files check:"
+          echo "$CHECK" | jq -r '.files[]? | "\(.filename)  \(.filesize) bytes"'
 
           PUBDATE_ON_ZENODO="$(echo "$CHECK" | jq -r '.metadata.publication_date // ""')"
           if [ -z "$PUBDATE_ON_ZENODO" ] || [ "$PUBDATE_ON_ZENODO" = "null" ]; then
@@ -351,6 +446,30 @@ jobs:
             echo "Expected: $ZENODO_REQUIRED_GRANT_ID"
             exit 1
           fi
+
+          README_OK="$(echo "$CHECK" | jq -r --arg fn "$ZENODO_README_ASSET" 'any(.files[]?; .filename == $fn)')"
+          if [ "$README_OK" != "true" ]; then
+            echo "ERROR: README file is missing from Zenodo draft; refusing to publish."
+            echo "Expected README asset: $ZENODO_README_ASSET"
+            echo "$CHECK" | jq '.files'
+            exit 1
+          fi
+
+          BADGE_OK="$(echo "$CHECK" | jq -r --arg fn "$ZENODO_BADGE_ASSET" 'any(.files[]?; .filename == $fn)')"
+          if [ "$BADGE_OK" != "true" ]; then
+            echo "ERROR: DOI badge SVG file is missing from Zenodo draft; refusing to publish."
+            echo "Expected badge asset: $ZENODO_BADGE_ASSET"
+            echo "$CHECK" | jq '.files'
+            exit 1
+          fi
+
+          FIRST_FILE="$(echo "$CHECK" | jq -r '.files[0].filename // ""')"
+          echo "First file reported by Zenodo: $FIRST_FILE"
+
+          if [ "$FIRST_FILE" != "$ZENODO_README_ASSET" ]; then
+            echo "::warning::README is uploaded, but Zenodo did not report it as the first file. Default preview cannot be fully guaranteed by the API."
+          fi
+
           echo "::endgroup::"
 
           echo "::group::Publish"
