@@ -565,7 +565,7 @@ if __name__ == "__main__":
                     full_bars   = pd.concat([bars_df_old, bars_df], axis=0)
 
                     # Re-query any hours with negative active liquidity
-                    full_states, full_bars = _fix_negative_liquidity_hours(
+                    full_bars, full_states = _fix_negative_liquidity_hours(
                         bars_df=full_bars,
                         states_df=full_states,
                         pool_id=POOL_ID,
