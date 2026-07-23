@@ -434,6 +434,56 @@ def _safe_read_parquet(path: str):
         return None
 
 
+def _fix_negative_liquidity_hours(
+    bars_df: pd.DataFrame,
+    states_df: pd.DataFrame,
+    pool_id: str,
+    peg_tick: int,
+    n_buckets: int,
+    min_tick: int,
+    max_tick: int,
+    peg_alignment: bool,
+    label: str = "",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Re-query any hours where active_liquidity_L has negative values."""
+    neg_hours = bars_df.loc[bars_df["active_liquidity_L"] < 0, "hour"].unique()
+    if len(neg_hours) == 0:
+        return bars_df, states_df
+
+    print(f"[INFO] {label}: {len(neg_hours)} hour(s) with negative liquidity detected; re-querying...")
+
+    for h in sorted(neg_hours):
+        h_end = h + timedelta(hours=1)
+        try:
+            h_states, h_bars = collect_hourly_liquidity_curves_retries(
+                start_dt_utc=h,
+                end_dt_utc=h_end,
+                pool_id=pool_id,
+                peg_tick=peg_tick,
+                n_buckets=n_buckets,
+                min_tick=min_tick,
+                max_tick=max_tick,
+                retry_min_tick_step=1_000,
+                max_retries=5,
+                peg_alignment=peg_alignment,
+            )
+            if h_bars.empty:
+                print(f"[WARN] {label}: re-query for hour {h} returned empty; keeping original data.")
+                continue
+            if (h_bars["active_liquidity_L"] < 0).any():
+                print(f"[WARN] {label}: hour {h} still has negative liquidity after retries; replacing with best available data.")
+            else:
+                print(f"[OK] {label}: hour {h} fixed.")
+            bars_df   = pd.concat([bars_df[bars_df["hour"] != h],   h_bars],   ignore_index=True)
+            states_df = pd.concat([states_df[states_df["hour"] != h], h_states], ignore_index=True)
+        except Exception as e:
+            print(f"[WARN] {label}: re-query for hour {h} failed: {e}; keeping original data.")
+
+    bars_df   = bars_df.sort_values(["hour", "tickLower"]).reset_index(drop=True)
+    states_df = states_df.sort_values("hour").reset_index(drop=True)
+    return bars_df, states_df
+
+
 if __name__ == "__main__":
 
     # Read blocks once (used in both branches)
@@ -513,7 +563,20 @@ if __name__ == "__main__":
                     bars_df_old = bars_df_old[bars_df_old['hour'] < start_dt]
                     full_states = pd.concat([states_df_old, states_df], axis=0)
                     full_bars   = pd.concat([bars_df_old, bars_df], axis=0)
-                    
+
+                    # Re-query any hours with negative active liquidity
+                    full_states, full_bars = _fix_negative_liquidity_hours(
+                        bars_df=full_bars,
+                        states_df=full_states,
+                        pool_id=POOL_ID,
+                        peg_tick=PEG_TICK,
+                        n_buckets=N_BUCKETS,
+                        min_tick=MIN_TICK,
+                        max_tick=MAX_TICK,
+                        peg_alignment=peg_alignment,
+                        label=label,
+                    )
+
                     os.makedirs(os.path.dirname(state_path), exist_ok=True)
                     full_states.to_parquet(state_path)
                     full_bars.to_parquet(bars_path)
