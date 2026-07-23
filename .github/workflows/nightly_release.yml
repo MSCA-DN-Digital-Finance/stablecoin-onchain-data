@@ -117,3 +117,14 @@ jobs:
           git add -A
           git commit -m "Update Plotly figures" || exit 0
           git push origin main
+      # 10) Notify Pages repo for dashboard update
+      - name: Notify GitHub Pages repository
+        env:
+          PAGES_REPO_TOKEN: ${{ secrets.PAGES_REPO_TOKEN }}
+        run: |
+          curl --fail-with-body --request POST \
+            --url https://api.github.com/repos/ochaff/ochaff.github.io/dispatches \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${PAGES_REPO_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --data '{"event_type":"data-release"}'
