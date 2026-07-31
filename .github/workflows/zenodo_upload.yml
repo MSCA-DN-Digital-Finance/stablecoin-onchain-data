@@ -245,32 +245,54 @@ jobs:
           BASE_SUBMITTED="$(echo "$BASE_JSON" | jq -r '.submitted // false')"
           echo "::endgroup::"
 
-          echo "::group::Create new version draft"
+          echo "::group::Create or resume version draft"
           if [ "$BASE_SUBMITTED" != "true" ]; then
             echo "ERROR: Expected base deposition to be published (submitted=true), got submitted=$BASE_SUBMITTED"
             exit 1
           fi
 
-          NEW_JSON="$(zenodo_api POST "$ZENODO_BASE_URL/api/deposit/depositions/$ZENODO_DEPOSITION_ID/actions/newversion")"
-          echo "$NEW_JSON" | jq '{id, state, submitted, links}'
-          TARGET_ID="$(echo "$NEW_JSON" | jq -r '.id')"
+          # Zenodo allows only one unpublished version draft at a time. A failed
+          # upload leaves that draft behind, so resume it on the next run rather
+          # than attempting to create another version. This makes transient file
+          # upload failures safe to rerun.
+          BASE_SELF_URL="$(echo "$BASE_JSON" | jq -r '.links.self // empty')"
+          DRAFT_URL="$(echo "$BASE_JSON" | jq -r '.links.latest_draft // empty')"
 
-          if [ -z "$TARGET_ID" ] || [ "$TARGET_ID" = "null" ]; then
-            echo "ERROR: newversion did not return an id"
+          if [ -n "$DRAFT_URL" ] && [ "$DRAFT_URL" != "$BASE_SELF_URL" ]; then
+            echo "Found an existing unpublished version draft; resuming it: $DRAFT_URL"
+          else
+            echo "No outstanding draft found; creating a new version."
+            # The response describes the original published record. Zenodo exposes
+            # the actual new draft through links.latest_draft, not the response id.
+            NEW_VERSION_RESPONSE="$(zenodo_api POST "$ZENODO_BASE_URL/api/deposit/depositions/$ZENODO_DEPOSITION_ID/actions/newversion")"
+            DRAFT_URL="$(echo "$NEW_VERSION_RESPONSE" | jq -r '.links.latest_draft // empty')"
+          fi
+
+          if [ -z "$DRAFT_URL" ] || [ "$DRAFT_URL" = "null" ] || [ "$DRAFT_URL" = "$BASE_SELF_URL" ]; then
+            echo "ERROR: Zenodo did not provide an unpublished version draft."
+            echo "Base deposition links:"
+            echo "$BASE_JSON" | jq '.links'
             exit 1
           fi
 
-          echo "New draft deposition id: $TARGET_ID"
+          TARGET_JSON="$(zenodo_api GET "$DRAFT_URL")"
+          TARGET_ID="$(echo "$TARGET_JSON" | jq -r '.id // empty')"
+          TARGET_SUBMITTED="$(echo "$TARGET_JSON" | jq -r '.submitted // false')"
+          if [ -z "$TARGET_ID" ] || [ "$TARGET_SUBMITTED" = "true" ]; then
+            echo "ERROR: latest_draft is not an editable unpublished deposition."
+            echo "$TARGET_JSON" | jq '{id, state, submitted, links}'
+            exit 1
+          fi
+
+          echo "Using draft deposition id: $TARGET_ID"
           echo "::endgroup::"
 
           echo "::group::Get bucket URL"
-          BUCKET="$(echo "$NEW_JSON" | jq -r '.links.bucket')"
+          BUCKET="$(echo "$TARGET_JSON" | jq -r '.links.bucket')"
           if [ -z "$BUCKET" ] || [ "$BUCKET" = "null" ]; then
             echo "Bucket missing in newversion response; refetching deposition..."
             TARGET_JSON="$(zenodo_api GET "$ZENODO_BASE_URL/api/deposit/depositions/$TARGET_ID")"
             BUCKET="$(echo "$TARGET_JSON" | jq -r '.links.bucket')"
-          else
-            TARGET_JSON="$NEW_JSON"
           fi
 
           if [ -z "$BUCKET" ] || [ "$BUCKET" = "null" ]; then
@@ -391,37 +413,57 @@ jobs:
           echo "Upload order:"
           printf ' - %s\n' "${UPLOAD_FILES[@]}"
 
-          for f in "${UPLOAD_FILES[@]}"; do
-            [ -f "$f" ] || continue
+          upload_file() {
+            local f="$1" name size body headers http_code curl_rc response attempt
             name="$(basename "$f")"
             size="$(stat -c%s "$f")"
-            echo "Uploading: $name ($size bytes) -> $BUCKET/$name"
 
-            body="$(mktemp)"
-            headers="$(mktemp)"
+            # Zenodo can report a transient transfer failure as HTTP 400. Retry
+            # that specific response; other 4xx responses remain hard failures.
+            for attempt in 1 2 3 4; do
+              echo "Uploading (attempt $attempt/4): $name ($size bytes) -> $BUCKET/$name"
+              body="$(mktemp)"
+              headers="$(mktemp)"
 
-            set +e
-            http_code=$(curl -sS \
-              --connect-timeout 20 --max-time 600 \
-              --retry 5 --retry-all-errors --retry-delay 2 \
-              -D "$headers" -o "$body" -w "%{http_code}" \
-              -H "Authorization: Bearer ${ZENODO_TOKEN}" \
-              --upload-file "$f" \
-              "$BUCKET/$name")
-            curl_rc=$?
-            set -e
+              set +e
+              http_code=$(curl -sS \
+                --connect-timeout 20 --max-time 600 \
+                --retry 5 --retry-all-errors --retry-delay 2 \
+                -D "$headers" -o "$body" -w "%{http_code}" \
+                -H "Authorization: Bearer ${ZENODO_TOKEN}" \
+                --upload-file "$f" \
+                "$BUCKET/$name")
+              curl_rc=$?
+              set -e
 
-            if [ "$curl_rc" -ne 0 ] || ! [[ "${http_code:-}" =~ ^[0-9]{3}$ ]] || [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+              if [ "$curl_rc" -eq 0 ] && [[ "${http_code:-}" =~ ^[0-9]{3}$ ]] \
+                && [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+                echo "Uploaded OK: $name (HTTP $http_code)"
+                return 0
+              fi
+
+              response="$(cat "$body" 2>/dev/null || true)"
+              if [ "$curl_rc" -eq 0 ] && [ "$http_code" = "400" ] \
+                && [[ "$response" == *"The file upload transfer failed, please try again."* ]] \
+                && [ "$attempt" -lt 4 ]; then
+                echo "Zenodo reported a transient transfer failure; retrying in 15 seconds..." >&2
+                sleep 15
+                continue
+              fi
+
               echo "ERROR: Upload failed for $name" >&2
               echo "  curl_rc=$curl_rc http_code='${http_code:-<empty>}'" >&2
               echo "---- response headers ----" >&2
               cat "$headers" >&2 || true
               echo "---- response body ----" >&2
               cat "$body" >&2 || true
-              exit 1
-            fi
+              return 1
+            done
+          }
 
-            echo "Uploaded OK: $name (HTTP $http_code)"
+          for f in "${UPLOAD_FILES[@]}"; do
+            [ -f "$f" ] || continue
+            upload_file "$f"
           done
           echo "::endgroup::"
 
