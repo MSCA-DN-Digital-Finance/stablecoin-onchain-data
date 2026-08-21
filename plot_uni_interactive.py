@@ -95,28 +95,33 @@ def plot_uniswap_liquidity_last24h_plotly(df, hour_col="hour"):
         ))
 
     fig.update_layout(
-        barmode="overlay",  # matches your matplotlib look (bars drawn on top of each other)
-        title=f"",
+        barmode="overlay",
+        title="",
         xaxis_title="USDC price",
         yaxis_title="tick liquidity ($)",
-        legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="center", x=0.5),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.04,
+            xanchor="center",
+            x=0.5,
+        ),
         sliders=[dict(
             active=len(steps) - 1,
             currentvalue=dict(prefix="Hour: "),
             pad=dict(t=50),
-            steps=steps
+            steps=steps,
         )],
-        margin=dict(b=110),
-        width=1200,
+        margin=dict(b=110, l=65, r=30, t=70),
         height=800,
-
-    )
-    fig.update_layout(
-        plot_bgcolor='white',
-        
+        autosize=True,
+        plot_bgcolor="white",
     )
 
-    fig.write_html("./site/uni_liquidity.html")
+    fig.write_html(
+        "./site/uni_liquidity.html",
+        config={"responsive": True},
+    )
 
 if __name__ == '__main__':
     df = pd.read_parquet('./data/Uniswap/hourly_liquidity_full.parquet')
