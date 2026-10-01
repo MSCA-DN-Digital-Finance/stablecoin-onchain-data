@@ -183,6 +183,15 @@ jobs:
           asset_id() {
             gh api "$release_endpoint" --jq ".assets[] | select(.name==\"$1\" and .state==\"uploaded\") | .id" 2>/dev/null || true
           }
+          asset_size() {
+            gh api "$release_endpoint" --jq ".assets[] | select(.name==\"$1\" and .state==\"uploaded\") | .size" 2>/dev/null || true
+          }
+          staged_asset_has_expected_size() {
+            [ "$(asset_size "$staged_name")" = "$(stat -c%s "$f")" ]
+          }
+          promoted_asset_is_current() {
+            [ "$(asset_id "$f")" = "$staged_id" ]
+          }
           any_asset_id() {
             gh api "$release_endpoint" --jq ".assets[] | select(.name==\"$1\") | .id" 2>/dev/null || true
           }
@@ -194,7 +203,8 @@ jobs:
           for f in aave_data.zip uniswap_data.zip curve_data.zip eth_blocks_data.zip; do
             # Upload a uniquely named staging asset first.  The old asset stays
             # downloadable if GitHub's upload endpoint transiently fails.
-            staged_name="${f}.staged-${GITHUB_RUN_ID}"
+            staged_name="${f%.zip}.staged-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.zip"
+            cp "$f" "$staged_name"
             staged_id=$(asset_id "$staged_name")
             if [ -z "$staged_id" ]; then
               # GitHub can leave an empty asset in the `starter` state after an
@@ -205,7 +215,7 @@ jobs:
               fi
 
               for attempt in 1 2 3 4 5; do
-                gh release upload data-latest "${f}#${staged_name}" || true
+                gh release upload data-latest "$staged_name" || true
                 staged_id=$(asset_id "$staged_name")
                 [ -n "$staged_id" ] && break
                 incomplete_staged_id=$(any_asset_id "$staged_name")
@@ -223,16 +233,39 @@ jobs:
               echo "Unable to stage $f; preserving the previous rolling asset." >&2
               exit 1
             fi
+            if ! retry staged_asset_has_expected_size; then
+              echo "Staged asset size does not match $f; preserving the previous rolling asset." >&2
+              exit 1
+            fi
+            rm -f "$staged_name"
 
             old_id=$(any_asset_id "$f")
             if [ -n "$old_id" ]; then
-              retry gh api -X DELETE "repos/${{ github.repository }}/releases/assets/$old_id"
+              backup_name="${f%.zip}.backup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.zip"
+              if ! retry gh api -X PATCH "repos/${{ github.repository }}/releases/assets/$old_id" -f name="$backup_name" >/dev/null; then
+                if [ "$(asset_id "$backup_name")" != "$old_id" ]; then
+                  echo "Could not back up the previous $f; leaving it in place." >&2
+                  exit 1
+                fi
+              fi
             fi
-            retry gh api -X PATCH "repos/${{ github.repository }}/releases/assets/$staged_id" -f name="$f"
+            if ! retry gh api -X PATCH "repos/${{ github.repository }}/releases/assets/$staged_id" -f name="$f" >/dev/null; then
+              if [ "$(asset_id "$f")" != "$staged_id" ]; then
+                if [ -n "$old_id" ]; then
+                  retry gh api -X PATCH "repos/${{ github.repository }}/releases/assets/$old_id" -f name="$f" >/dev/null || true
+                fi
+                echo "Could not promote $f; the previous asset was restored if possible." >&2
+                exit 1
+              fi
+            fi
 
-            if [ -z "$(asset_id "$f")" ]; then
-              echo "Rolling release did not contain $f after promotion." >&2
+            if ! retry promoted_asset_is_current; then
+              echo "Rolling release did not contain the new $f after promotion." >&2
               exit 1
+            fi
+            if [ -n "$old_id" ]; then
+              retry gh api -X DELETE "repos/${{ github.repository }}/releases/assets/$old_id" || \
+                echo "::warning::The old $f backup could not be removed."
             fi
           done
       # 6) Build updated Plotly figure 
