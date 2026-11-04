@@ -1,15 +1,13 @@
 name: Nightly DeFi Data Update (Release)
 
+# Kubernetes provides the nightly schedule through the GitHub Actions API.
 on:
-  schedule:
-    - cron: "20 2 * * *"  # nightly at 02:20 UTC
   workflow_dispatch: {}
 
 permissions:
   contents: write
 
-# Do not let a manual run and the scheduled run replace the same rolling
-# release assets at the same time.
+# Serialize manual and Kubernetes-triggered runs.
 concurrency:
   group: nightly-defi-data-release
   cancel-in-progress: false
